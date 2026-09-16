@@ -1,0 +1,3 @@
+functions-framework==3.*
+pymysql==1.1.0
+requests==2.*
