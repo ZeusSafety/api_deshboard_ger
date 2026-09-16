@@ -20,4 +20,4 @@ EXPOSE 8080
 ENV PORT=8080
 
 # Ejecutar la función usando functions-framework
-CMD exec functions-framework --target=registroTableroVentas --port=$PORT --host=0.0.0.0
+CMD exec functions-framework --target=registro_dashboard_ventas --port=$PORT --host=0.0.0.0
