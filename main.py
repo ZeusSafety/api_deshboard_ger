@@ -408,17 +408,37 @@ def clientes_por_origen(request):
 
 # ---------------------------------------------------------------------
 # Ventas por ORIGEN del cliente  (vw_ventas_por_origen)
+# El canal real vive en cliente.ORIGEN (WHATSAPP, FACEBOOK, META ADS…).
+# vw_ventas_validas.ORIGEN suele ir NULL / FISICO (no es un canal).
 # ---------------------------------------------------------------------
 def ventas_por_origen(request):
-    where, params = construir_filtros(request)
+    filtros = {k: v for k, v in FILTROS_VENTAS.items() if k != "origen"}
+    where, params = construir_filtros(request, filtros)
+    origen = leer_texto(request, "origen")
     sql = f"""
-        SELECT ORIGEN,
+        SELECT canal AS ORIGEN,
                COUNT(DISTINCT ID_CLIENTE) AS NUM_CLIENTES,
                COUNT(DISTINCT ID_VENTA)   AS NUM_VENTAS,
                SUM(TOTAL)                 AS TOTAL_VENTAS
-        FROM {VISTA_BASE}
-        {where}
-        GROUP BY ORIGEN
+        FROM (
+            SELECT vv.ID_CLIENTE,
+                   vv.ID_VENTA,
+                   vv.TOTAL,
+                   CASE
+                     WHEN c.ORIGEN IS NULL OR TRIM(c.ORIGEN) = '' THEN NULL
+                     WHEN UPPER(TRIM(c.ORIGEN)) IN ('FISICO', 'FÍSICO') THEN NULL
+                     ELSE TRIM(c.ORIGEN)
+                   END AS canal
+            FROM {VISTA_BASE} vv
+            LEFT JOIN cliente c ON c.ID_CLIENTE = vv.ID_CLIENTE
+            {where}
+        ) t
+    """
+    if origen:
+        sql += " WHERE canal = %s"
+        params = params + (origen,)
+    sql += """
+        GROUP BY canal
         ORDER BY TOTAL_VENTAS DESC
     """
     return responder_ok(consultar(sql, params))
@@ -653,17 +673,25 @@ def kpi_resumen(request):
 # Clientes nuevos por mes  (vw_clientes_nuevos_por_mes)
 # ---------------------------------------------------------------------
 def clientes_nuevos_por_mes(request):
-    sql = """
-        SELECT YEAR(FECHA_CREACION)                 AS ANIO,
-               MONTH(FECHA_CREACION)                AS MES,
-               DATE_FORMAT(FECHA_CREACION, '%%Y-%%m') AS ANIO_MES,
-               COUNT(*)                             AS CLIENTES_NUEVOS
-        FROM cliente
-        WHERE ESTADO = '1'
-        GROUP BY YEAR(FECHA_CREACION), MONTH(FECHA_CREACION), DATE_FORMAT(FECHA_CREACION, '%%Y-%%m')
+    # FECHA_CREACION está vacío en casi todo el maestro. Si no hay fecha de
+    # alta, usamos la primera venta válida del cliente para armar la serie.
+    sql = f"""
+        SELECT YEAR(alta) AS ANIO,
+               MONTH(alta) AS MES,
+               DATE_FORMAT(alta, '%Y-%m') AS ANIO_MES,
+               COUNT(*) AS CLIENTES_NUEVOS
+        FROM (
+            SELECT COALESCE(c.FECHA_CREACION, MIN(vv.FECHA)) AS alta
+            FROM cliente c
+            LEFT JOIN {VISTA_BASE} vv ON vv.ID_CLIENTE = c.ID_CLIENTE
+            WHERE c.ESTADO = '1'
+            GROUP BY c.ID_CLIENTE, c.FECHA_CREACION
+        ) altas
+        WHERE alta IS NOT NULL
+        GROUP BY YEAR(alta), MONTH(alta), DATE_FORMAT(alta, '%Y-%m')
         ORDER BY ANIO, MES
     """
-    return responder_ok(consultar(sql, ()))
+    return responder_ok(consultar(sql))
 
 
 # ---------------------------------------------------------------------
